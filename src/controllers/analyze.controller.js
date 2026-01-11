@@ -1,5 +1,5 @@
-const ollama = require('./src/config/ai');
-const db = require('./src/config/db');
+const db = require('../config/db');
+const ollama = require('../config/ai');
 
 const analyzeText = async (req, res) => {
     const { text } = req.body;
