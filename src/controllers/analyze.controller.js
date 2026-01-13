@@ -6,6 +6,10 @@ const analyzeText = async (req, res) => {
 
     if (!text) return res.status(400).json({ error: "Teks tidak boleh kosong" });
 
+    res.setHeader('Content-Type', 'text/event-stream');
+    res.setHeader('Cache-Control', 'no-cache');
+    res.setHeader('Connection', 'keep-alive');
+
     try {
         const response = await ollama.chat({
             model: 'llama3.2',
@@ -13,18 +17,30 @@ const analyzeText = async (req, res) => {
                 { role: 'system', content: 'Anda adalah asisten AI. Analisis teks dan berikan output VALID JSON dengan field: category, sentiment, priority (Low/Medium/High), summary (singkat).' },
                 { role: 'user', content: text }
             ],
-            format: 'json',
-            options: { temperature: 0.1 }
+            stream: true,
         });
 
-        const aiResult = JSON.parse(response.message.content);
+        let aiResponse = '';
 
-        const query = 'INSERT INTO logs (raw_text, result) VALUES ($1, $2) RETURNING *';
-        const saved = await db.query(query, [text, aiResult]);
+        for await (const part of stream) {
+            const content = part.message.content;
+            aiResponse += content;
+            res.write(`data: ${JSON.stringify({ chunk: content })}\n\n`);
+        }
 
-        res.json(saved.rows[0]);
+        try {
+            const aiResult = JSON.parse(aiResponse);
+            await db.query('INSERT INTO logs (raw_text, result) VALUES ($1, $2)', [text, aiResult]);
+
+            res.write(`data: ${JSON.stringify({ done: true, final: aiResult })}\n\n`);
+        } catch (e) {
+            console.error('Error parsing AI response:', aiResponse);
+        }
+
+        res.end();
     } catch (error) {
-        res.status(500).json({ error: error.message });
+        res.write(`data: ${JSON.stringify({ error: 'Terjadi kesalahan saat memproses permintaan.' })}\n\n`);
+        res.end();
     }
 }
 
